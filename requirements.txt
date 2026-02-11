@@ -1,0 +1,6 @@
+# Host-side Python deps (not installed into the guest)
+# Pin as needed in your environment.
+ansible-core>=2.16
+molecule>=6.0
+molecule-vagrant>=2.0
+ansible-lint>=24.0

@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Rename ethernet devices deterministically to eth0, eth1, ...
+# This is more reliable than relying on kernel enumeration and avoids gaps
+# like "eth0" + "eth2".
+
+ignore_re='^(lo|virbr|docker|veth|br-|tap|tun|wg|sit|gre|gretap|ip6gre|ip6tnl|erspan|bond|team|dummy|macvtap|macvlan)'
+
+# Wait briefly for NICs to appear (udev timing can vary).
+devs=()
+for _ in $(seq 1 50); do
+  devs=()
+  while IFS= read -r line; do
+    # Example: "2: eth1: <...>"
+    ifindex="${line%%:*}"
+    rest="${line#*: }"
+    dev="${rest%%:*}"
+    dev="${dev%%@*}"
+
+    if [[ "${dev}" =~ ${ignore_re} ]]; then
+      continue
+    fi
+
+    if ip -o link show dev "${dev}" 2>/dev/null | grep -q 'link/ether'; then
+      devs+=("${ifindex}:${dev}")
+    fi
+  done < <(ip -o link show 2>/dev/null || true)
+
+  if [[ ${#devs[@]} -gt 0 ]]; then
+    break
+  fi
+  sleep 0.1
+done
+
+if [[ ${#devs[@]} -eq 0 ]]; then
+  exit 0
+fi
+
+# Sort by ifindex.
+IFS=$'\n' devs_sorted=($(printf '%s\n' "${devs[@]}" | sort -n -t: -k1,1))
+unset IFS
+
+names=()
+for entry in "${devs_sorted[@]}"; do
+  names+=("${entry#*:}")
+done
+
+# Fast-path: already eth0, eth1, ...
+ok=1
+for i in "${!names[@]}"; do
+  want="eth${i}"
+  if [[ "${names[$i]}" != "${want}" ]]; then
+    ok=0
+    break
+  fi
+done
+
+if [[ "${ok}" == "1" ]]; then
+  exit 0
+fi
+
+# Phase 1: rename to temporary names to avoid collisions.
+tmp_names=()
+for i in "${!names[@]}"; do
+  old="${names[$i]}"
+  tmp="ghxeth${i}"
+  tmp_names+=("${tmp}")
+  ip link set dev "${old}" down >/dev/null 2>&1 || true
+  ip link set dev "${old}" name "${tmp}" >/dev/null 2>&1 || true
+done
+
+# Phase 2: rename to eth0, eth1, ...
+for i in "${!tmp_names[@]}"; do
+  tmp="${tmp_names[$i]}"
+  want="eth${i}"
+  if ip -o link show dev "${tmp}" >/dev/null 2>&1; then
+    ip link set dev "${tmp}" name "${want}" >/dev/null 2>&1 || true
+    ip link set dev "${want}" up >/dev/null 2>&1 || true
+  fi
+done

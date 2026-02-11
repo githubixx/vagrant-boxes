@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+log() {
+  if [[ "${GHX_DEBUG:-}" == "1" ]]; then
+    echo "[ghx-fix-suse-repos] $*" >&2
+  fi
+}
+
+repos_dir=/etc/zypp/repos.d
+
+if [[ ! -d "$repos_dir" ]]; then
+  exit 0
+fi
+
+shopt -s nullglob
+repo_files=("$repos_dir"/*.repo)
+shopt -u nullglob
+
+if [[ ${#repo_files[@]} -eq 0 ]]; then
+  exit 0
+fi
+
+fix_repo_file() {
+  local f="$1"
+  local tmp
+  tmp="${f}.tmp"
+
+  # Apply minimal, deterministic rewrites.
+  sed -E \
+    -e 's/^baseurl=http:\/\//baseurl=https:\/\//g' \
+    -e 's/^mirrorlist=http:\/\//mirrorlist=https:\/\//g' \
+    -e 's/^metalink=http:\/\//metalink=https:\/\//g' \
+    -e 's/^gpgkey=http:\/\//gpgkey=https:\/\//g' \
+    -e 's|://download1\.opensuse\.org/|://downloadcontent.opensuse.org/|g' \
+    -e 's|://download\.opensuse\.org/|://downloadcontent.opensuse.org/|g' \
+    -e 's|://cdn\.opensuse\.org/|://downloadcontent.opensuse.org/|g' \
+    "$f" >"$tmp"
+
+  # Disable repo-openh264 section (not needed for WireGuard; can hard-fail refresh).
+  # Works even if zypper isn't usable yet.
+  awk '
+    BEGIN { in_openh264=0; saw_enabled=0 }
+    /^\[.*\]$/ {
+      if (in_openh264 && saw_enabled==0) {
+        print "enabled=0"
+      }
+      in_openh264 = ($0 ~ /repo-openh264/)
+      saw_enabled=0
+      print
+      next
+    }
+    {
+      if (in_openh264 && $0 ~ /^enabled[[:space:]]*=/) {
+        print "enabled=0"
+        saw_enabled=1
+        next
+      }
+      print
+    }
+    END {
+      if (in_openh264 && saw_enabled==0) {
+        print "enabled=0"
+      }
+    }
+  ' "$tmp" >"${tmp}.2" 2>/dev/null || true
+  if [[ -s "${tmp}.2" ]]; then
+    mv -f "${tmp}.2" "$tmp" 2>/dev/null || true
+  else
+    rm -f "${tmp}.2" 2>/dev/null || true
+  fi
+
+  if ! cmp -s "$f" "$tmp" 2>/dev/null; then
+    log "updating $f"
+    cat "$tmp" >"$f" || true
+  fi
+  rm -f "$tmp" 2>/dev/null || true
+}
+
+for f in "${repo_files[@]}"; do
+  fix_repo_file "$f"
+done
+
+# Leap 16.0 tends to include repo-openh264 by default; it is not needed for
+# WireGuard and can hard-fail `zypper refresh` if codecs host is not resolvable.
+if command -v zypper >/dev/null 2>&1; then
+  zypper -n mr -d repo-openh264 >/dev/null 2>&1 || true
+  zypper -n mr -d openSUSE:repo-openh264 >/dev/null 2>&1 || true
+fi
+
+exit 0

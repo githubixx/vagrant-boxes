@@ -1,0 +1,12 @@
+[Unit]
+Description=First boot cleanup for Vagrant base box
+ConditionPathExists=!/var/lib/box-firstboot-cleanup.done
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/box-firstboot-cleanup.sh
+
+[Install]
+WantedBy=multi-user.target

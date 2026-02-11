@@ -1,0 +1,52 @@
+#cloud-config
+
+users:
+  - default
+  - name: vagrant
+    shell: /bin/bash
+    lock_passwd: false
+
+ssh_pwauth: true
+chpasswd:
+  expire: false
+  list: |
+    vagrant:vagrant
+
+bootcmd:
+  - [ mkdir, -p, /etc/NetworkManager/system-connections ]
+  - [ bash, -lc, 'printf "FIRSTBOOT=no\n" > /etc/sysconfig/firstboot || true' ]
+  - [ bash, -lc, 'rm -f /etc/YaST2/firstboot.xml /etc/YaST2/firstboot* /var/lib/YaST2/firstboot* 2>/dev/null || true' ]
+  - [ bash, -lc, 'systemctl mask --now jeos-firstboot.service yast2-firstboot.service firstboot.service 2>/dev/null || true' ]
+
+write_files:
+  - path: /etc/sudoers.d/90-vagrant
+    owner: root:root
+    permissions: '0440'
+    content: |
+      vagrant ALL=(ALL) NOPASSWD:ALL
+
+  - path: /etc/NetworkManager/system-connections/20-wired-dhcp.nmconnection
+    owner: root:root
+    permissions: '0600'
+    content: |
+      [connection]
+      id=wired-dhcp
+      type=ethernet
+      autoconnect=true
+      match-device=type:ethernet
+
+      [ipv4]
+      method=auto
+
+      [ipv6]
+      method=auto
+
+runcmd:
+  - [ bash, -lc, 'chmod 600 /etc/NetworkManager/system-connections/20-wired-dhcp.nmconnection || true' ]
+  - [ bash, -lc, 'systemctl enable --now NetworkManager || true' ]
+  - [ bash, -lc, 'systemctl restart NetworkManager || true' ]
+  - [ bash, -lc, 'nmcli connection reload || true' ]
+  - [ bash, -lc, 'nmcli --wait 20 connection up wired-dhcp || true' ]
+  - [ bash, -lc, 'systemctl enable --now sshd || systemctl enable --now ssh || true' ]
+  - [ bash, -lc, 'systemctl disable --now jeos-firstboot.service yast2-firstboot.service firstboot.service 2>/dev/null || true' ]
+

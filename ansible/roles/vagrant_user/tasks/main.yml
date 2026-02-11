@@ -1,0 +1,89 @@
+---
+- name: Determine vagrant admin group
+  ansible.builtin.set_fact:
+    vagrant_user_admin_group: "{{ 'sudo' if ansible_facts['os_family'] == 'Debian' else 'wheel' }}"
+
+- name: Load Vagrant insecure public key
+  ansible.builtin.set_fact:
+    vagrant_user_insecure_public_key: "{{ lookup('ansible.builtin.file', role_path + '/files/vagrant_insecure_public_key.pub') | trim }}"
+
+- name: Ensure admin group exists (Debian)
+  ansible.builtin.group:
+    name: sudo
+    state: present
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Ensure admin group exists (RedHat/Fedora/Suse/Arch)
+  ansible.builtin.group:
+    name: wheel
+    state: present
+  when: ansible_facts['os_family'] in ['RedHat', 'Suse'] or ansible_facts['distribution'] in ['Fedora', 'Archlinux']
+
+- name: Ensure vagrant primary group exists
+  ansible.builtin.group:
+    name: vagrant
+    state: present
+
+- name: Create vagrant user
+  ansible.builtin.user:
+    name: vagrant
+    group: vagrant
+    shell: /bin/bash
+    groups: "{{ vagrant_user_admin_group }}"
+    append: true
+    create_home: true
+
+- name: Allow passwordless sudo for vagrant
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/vagrant
+    content: "vagrant ALL=(ALL) NOPASSWD:ALL\n"
+    owner: root
+    group: root
+    mode: '0440'
+    validate: /usr/sbin/visudo -cf %s
+
+- name: Ensure vagrant .ssh directory exists
+  ansible.builtin.file:
+    path: /home/vagrant/.ssh
+    state: directory
+    owner: vagrant
+    group: vagrant
+    mode: '0700'
+
+- name: Install Vagrant insecure public key
+  ansible.builtin.copy:
+    dest: /home/vagrant/.ssh/authorized_keys
+    content: "{{ vagrant_user_insecure_public_key }}\n"
+    owner: vagrant
+    group: vagrant
+    mode: '0600'
+
+- name: Check sshd_config.d support
+  ansible.builtin.stat:
+    path: /etc/ssh/sshd_config.d
+  register: vagrant_user_sshd_config_d
+
+- name: Configure sshd hardening for Vagrant (drop-in)
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/99-vagrant.conf
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      ChallengeResponseAuthentication no
+      UseDNS no
+    owner: root
+    group: root
+    mode: '0644'
+  when: vagrant_user_sshd_config_d.stat.exists
+
+- name: Configure sshd hardening for Vagrant (legacy sshd_config)
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?{{ item.key }}\\s+"
+    line: "{{ item.key }} {{ item.value }}"
+    create: false
+  loop:
+    - { key: 'PasswordAuthentication', value: 'no' }
+    - { key: 'ChallengeResponseAuthentication', value: 'no' }
+    - { key: 'UseDNS', value: 'no' }
+  when: not vagrant_user_sshd_config_d.stat.exists
