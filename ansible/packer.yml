@@ -1,0 +1,10 @@
+---
+- name: Provision minimal Vagrant base box
+  hosts: all
+  become: "{{ ansible_user != 'root' }}"
+  gather_facts: true
+
+  roles:
+    - role: base
+    - role: vagrant_user
+    - role: cleanup

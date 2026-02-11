@@ -1,0 +1,22 @@
+.ansible
+.vagrant/
+.molecule/
+__pycache__/
+*.pyc
+
+# direnv / venv
+.direnv/
+.envrc
+.venv/
+
+# Packer
+packer_cache/
+packer/logs/
+output-*/
+*.box
+
+# Editor
+.vscode/
+
+# Ansible
+*.retry

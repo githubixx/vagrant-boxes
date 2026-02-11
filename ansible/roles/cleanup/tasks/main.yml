@@ -1,0 +1,83 @@
+---
+- name: Clean cloud-init (if installed)
+  ansible.builtin.command: cloud-init clean --logs
+  changed_when: false
+  failed_when: false
+
+- name: Clean package manager caches (Debian)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+  args:
+    executable: /bin/bash
+  changed_when: false
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Clean package manager caches (RedHat/Fedora)
+  ansible.builtin.command: "{{ item }}"
+  loop:
+    - dnf clean all
+    - yum clean all
+  changed_when: false
+  failed_when: false
+  when: ansible_facts['os_family'] == 'RedHat' or ansible_facts['distribution'] == 'Fedora'
+
+- name: Clean package manager caches (Suse)
+  ansible.builtin.command: zypper clean --all
+  changed_when: false
+  failed_when: false
+  when: ansible_facts['os_family'] == 'Suse'
+
+- name: Clean package manager caches (Arch)
+  ansible.builtin.command: pacman -Scc --noconfirm
+  changed_when: false
+  failed_when: false
+  when: ansible_facts['distribution'] == 'Archlinux'
+
+- name: Reset machine-id
+  ansible.builtin.shell: |
+    set -euo pipefail
+    truncate -s 0 /etc/machine-id || true
+    rm -f /var/lib/dbus/machine-id || true
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Truncate logs
+  ansible.builtin.shell: |
+    set -euo pipefail
+    find /var/log -type f -exec truncate -s 0 {} + || true
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Ensure /usr/local/sbin exists
+  ansible.builtin.file:
+    path: /usr/local/sbin
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install first-boot temp cleanup script
+  ansible.builtin.copy:
+    src: box-firstboot-cleanup.sh
+    dest: /usr/local/sbin/box-firstboot-cleanup.sh
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install first-boot temp cleanup systemd unit
+  ansible.builtin.copy:
+    src: box-firstboot-cleanup.service
+    dest: /etc/systemd/system/box-firstboot-cleanup.service
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Enable first-boot temp cleanup service
+  ansible.builtin.systemd:
+    name: box-firstboot-cleanup.service
+    enabled: true
+    daemon_reload: true

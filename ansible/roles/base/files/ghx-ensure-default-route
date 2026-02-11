@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Ensure a default route exists.
+#
+# Some SUSE + Vagrant/libvirt combinations can bring interfaces up but end up
+# without a default route (especially with multiple NICs and static addressing).
+# This helper is intentionally conservative:
+# - it only acts if there is no default route
+# - it only adds a default route if it can reach a plausible gateway IP
+
+log() {
+  if [[ "${GHX_DEBUG:-}" == "1" ]]; then
+    echo "[ghx-ensure-default-route] $*" >&2
+  fi
+}
+
+if ip -4 route show default 2>/dev/null | grep -q '^default '; then
+  exit 0
+fi
+
+# During early boot, interfaces and routes may not be present yet. Retry a bit.
+for _ in $(seq 1 30); do
+  if ip -4 route show default 2>/dev/null | grep -q '^default '; then
+    exit 0
+  fi
+
+  # Prefer eth* if present; fall back to all non-loopback links.
+  ifaces=()
+  while IFS= read -r dev; do
+    [[ -n "$dev" ]] && ifaces+=("$dev")
+  done < <(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | cut -d@ -f1 | grep -Ev '^lo$' || true)
+
+  eth_ifaces=()
+  for dev in "${ifaces[@]}"; do
+    if [[ "$dev" =~ ^eth[0-9]+$ ]]; then
+      eth_ifaces+=("$dev")
+    fi
+  done
+
+  if [[ ${#eth_ifaces[@]} -gt 0 ]]; then
+    # Prefer eth0 first when present.
+    ifaces=()
+    if printf '%s\n' "${eth_ifaces[@]}" | grep -qx 'eth0'; then
+      ifaces+=("eth0")
+    fi
+    for dev in "${eth_ifaces[@]}"; do
+      [[ "$dev" == "eth0" ]] && continue
+      ifaces+=("$dev")
+    done
+  fi
+
+  ip4_to_int() {
+    local ip="$1"
+    local a b c d
+    IFS=. read -r a b c d <<<"$ip"
+    echo $(( (a<<24) + (b<<16) + (c<<8) + d ))
+  }
+
+  int_to_ip4() {
+    local n="$1"
+    local a b c d
+    a=$(( (n>>24) & 255 ))
+    b=$(( (n>>16) & 255 ))
+    c=$(( (n>>8) & 255 ))
+    d=$(( n & 255 ))
+    printf '%d.%d.%d.%d\n' "$a" "$b" "$c" "$d"
+  }
+
+  cidr_first_host() {
+    local cidr="$1"
+    local ip prefix
+    ip="${cidr%/*}"
+    prefix="${cidr#*/}"
+
+    # Skip /31 and /32.
+    if [[ -z "$prefix" ]] || [[ "$prefix" -ge 31 ]]; then
+      return 1
+    fi
+
+    local ip_i mask net gw
+    ip_i="$(ip4_to_int "$ip")"
+    mask=$(( (0xFFFFFFFF << (32-prefix)) & 0xFFFFFFFF ))
+    net=$(( ip_i & mask ))
+    gw=$(( net + 1 ))
+    int_to_ip4 "$gw"
+  }
+
+  pick_gateway() {
+    local iface="$1"
+
+    local cidrs=()
+    while IFS= read -r cidr; do
+      [[ -n "$cidr" ]] && cidrs+=("$cidr")
+    done < <(ip -4 route show dev "$iface" scope link 2>/dev/null | awk '{print $1}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$' || true)
+
+    for cidr in "${cidrs[@]}"; do
+      cidr_first_host "$cidr" && return 0
+    done
+    return 1
+  }
+
+  for iface in "${ifaces[@]}"; do
+    # Skip interfaces without IPv4 addresses yet.
+    if ! ip -4 addr show dev "$iface" 2>/dev/null | grep -q ' inet '; then
+      log "no IPv4 address yet on $iface"
+      continue
+    fi
+
+    gw="$(pick_gateway "$iface" 2>/dev/null || true)"
+    if [[ -z "$gw" ]]; then
+      continue
+    fi
+
+    log "candidate: iface=$iface gw=$gw"
+
+    # Can we reach the would-be gateway without a default route? (same subnet)
+    if ping -c1 -W1 -I "$iface" "$gw" >/dev/null 2>&1; then
+      log "reachable gateway: $gw via $iface; installing default route"
+
+      ip -4 route replace default via "$gw" dev "$iface" metric 1024 || true
+
+      routes_file=/etc/sysconfig/network/routes
+      mkdir -p "$(dirname "$routes_file")" 2>/dev/null || true
+      desired_line="default $gw - $iface"
+      if grep -Eq '^default\s' "$routes_file" 2>/dev/null; then
+        tmp="${routes_file}.tmp"
+        awk -v repl="$desired_line" 'BEGIN{done=0} /^default[[:space:]]+/{ if(!done){ print repl; done=1 } next } {print} END{ if(!done) print repl }' \
+          "$routes_file" >"$tmp" 2>/dev/null || true
+        if [[ -s "$tmp" ]]; then
+          cat "$tmp" >"$routes_file" 2>/dev/null || true
+        fi
+        rm -f "$tmp" 2>/dev/null || true
+      else
+        printf '%s\n' "$desired_line" >> "$routes_file" 2>/dev/null || true
+      fi
+
+      exit 0
+    else
+      log "gateway not reachable yet: $gw via $iface"
+    fi
+  done
+
+  sleep 1
+done
+
+exit 0

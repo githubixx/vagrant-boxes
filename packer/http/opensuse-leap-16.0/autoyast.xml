@@ -1,0 +1,96 @@
+<?xml version="1.0"?>
+<!DOCTYPE profile>
+<profile xmlns="http://www.suse.com/1.0/yast2ns" xmlns:config="http://www.suse.com/1.0/configns">
+  <general>
+    <mode>
+      <confirm config:type="boolean">false</confirm>
+      <final_reboot config:type="boolean">true</final_reboot>
+    </mode>
+  </general>
+
+  <networking>
+    <keep_install_network config:type="boolean">true</keep_install_network>
+  </networking>
+
+  <users config:type="list">
+    <user>
+      <username>root</username>
+      <user_password>vagrant</user_password>
+      <encrypted config:type="boolean">false</encrypted>
+    </user>
+    <user>
+      <username>vagrant</username>
+      <fullname>Vagrant</fullname>
+      <user_password>vagrant</user_password>
+      <encrypted config:type="boolean">false</encrypted>
+      <shell>/bin/bash</shell>
+      <groups config:type="list">
+        <group>users</group>
+         <group>wheel</group>
+      </groups>
+    </user>
+  </users>
+
+  <software>
+    <patterns config:type="list">
+      <pattern>minimal_base</pattern>
+    </patterns>
+    <packages config:type="list">
+      <package>openssh</package>
+      <package>sudo</package>
+      <package>python3</package>
+      <package>python3-xml</package>
+      <package>NetworkManager</package>
+    </packages>
+  </software>
+
+   <scripts>
+     <post-scripts config:type="list">
+       <script>
+         <filename>packer-post.sh</filename>
+         <interpreter>shell</interpreter>
+         <source><![CDATA[
+   set -euo pipefail
+
+   # Ensure SSH is enabled and reachable.
+   systemctl enable sshd || true
+   systemctl restart sshd || true
+
+   # Ensure networking is up via DHCP.
+   systemctl enable NetworkManager || true
+   systemctl restart NetworkManager || true
+
+   # Passwordless sudo for vagrant.
+   install -d -m 0750 /etc/sudoers.d
+   printf '%s\n' 'vagrant ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/99-vagrant
+   chmod 0440 /etc/sudoers.d/99-vagrant
+
+   # Permit password auth (Packer uses vagrant/vagrant initially).
+   if grep -qE '^#?PasswordAuthentication' /etc/ssh/sshd_config; then
+     sed -ri 's/^#?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+   else
+     echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config
+   fi
+
+   systemctl restart sshd || true
+           ]]></source>
+       </script>
+     </post-scripts>
+   </scripts>
+
+  <partitioning config:type="list">
+    <drive>
+      <device>/dev/vda</device>
+      <initialize config:type="boolean">true</initialize>
+      <type>CT_DISK</type>
+      <partitions config:type="list">
+        <partition>
+          <partition_id config:type="integer">131</partition_id>
+          <mount>/</mount>
+          <filesystem>btrfs</filesystem>
+          <size>max</size>
+        </partition>
+      </partitions>
+    </drive>
+  </partitioning>
+</profile>

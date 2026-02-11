@@ -1,0 +1,47 @@
+#cloud-config
+
+users:
+  - default
+  - name: vagrant
+    shell: /bin/bash
+    lock_passwd: false
+
+ssh_pwauth: true
+chpasswd:
+  expire: false
+  list: |
+    vagrant:vagrant
+
+# Arch cloud images may generate systemd-networkd config pinned to the build-time MAC address.
+# Under Vagrant/libvirt the runtime NIC MAC differs, leaving the NIC unmanaged and without DHCP.
+# Disable cloud-init networking and provide a generic DHCP networkd config instead.
+write_files:
+  - path: /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+    owner: root:root
+    permissions: '0644'
+    content: |
+      network:
+        config: disabled
+
+  - path: /etc/systemd/network/20-wired-dhcp.network
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Match]
+      Type=ether
+
+      [Network]
+      DHCP=yes
+      IPv6AcceptRA=yes
+
+  - path: /etc/sudoers.d/90-vagrant
+    owner: root:root
+    permissions: '0440'
+    content: |
+      vagrant ALL=(ALL) NOPASSWD:ALL
+
+runcmd:
+  - [ bash, -lc, 'mkdir -p /etc/systemd/network' ]
+  - [ bash, -lc, 'systemctl enable --now ssh || systemctl enable --now sshd || true' ]
+  - [ bash, -lc, 'systemctl enable --now systemd-networkd || true' ]
+  - [ bash, -lc, 'systemctl restart systemd-networkd || true' ]

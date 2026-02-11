@@ -1,0 +1,22 @@
+[Unit]
+Description=Build and publish Vagrant libvirt boxes to Vagrant Cloud
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Adjust to your local checkout path
+WorkingDirectory=/path/to/your/checkout
+
+# Store secrets and optional overrides in an environment file.
+# Example file: /etc/default/vagrant-box-publish
+EnvironmentFile=-/etc/default/vagrant-box-publish
+
+# The wrapper handles logging, locking, and retries.
+ExecStart=/path/to/your/checkout/scripts/publish-weekly.sh
+
+# Hardening (optional)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true

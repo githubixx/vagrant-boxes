@@ -1,0 +1,770 @@
+---
+- name: Determine OpenSSH package name
+  ansible.builtin.set_fact:
+    base_openssh_package: >-
+      {{
+        'openssh-server'
+        if (ansible_facts['os_family'] in ['Debian', 'RedHat'] or ansible_facts['distribution'] == 'Fedora')
+        else 'openssh'
+      }}
+
+- name: Detect SUSE-like guest
+  ansible.builtin.set_fact:
+    base_is_suse_like: "{{ ansible_facts['os_family'] == 'Suse' }}"
+
+- name: Find zypper repo definitions (SUSE)
+  ansible.builtin.find:
+    paths: /etc/zypp/repos.d
+    patterns: '*.repo'
+    file_type: file
+  register: base_suse_repo_files
+  failed_when: false
+  when: base_is_suse_like
+
+- name: Repair corrupted zypper repo keys (SUSE)
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: '^\\\\1='
+    replace: 'baseurl='
+  loop: "{{ base_suse_repo_files.files | default([]) }}"
+  when: base_is_suse_like
+
+- name: Prefer HTTPS for zypper baseurl (SUSE)
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: '^baseurl=http://'
+    replace: 'baseurl=https://'
+  loop: "{{ base_suse_repo_files.files | default([]) }}"
+  when: base_is_suse_like
+
+- name: Prefer HTTPS for zypper mirrorlist (SUSE)
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: '^mirrorlist=http://'
+    replace: 'mirrorlist=https://'
+  loop: "{{ base_suse_repo_files.files | default([]) }}"
+  when: base_is_suse_like
+
+- name: Prefer HTTPS for zypper metalink (SUSE)
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: '^metalink=http://'
+    replace: 'metalink=https://'
+  loop: "{{ base_suse_repo_files.files | default([]) }}"
+  when: base_is_suse_like
+
+- name: Prefer HTTPS for zypper gpgkey (SUSE)
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: '^gpgkey=http://'
+    replace: 'gpgkey=https://'
+  loop: "{{ base_suse_repo_files.files | default([]) }}"
+  when: base_is_suse_like
+
+- name: Prefer CDN host for openSUSE repo URLs (SUSE)
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: '://download1\.opensuse\.org/'
+    replace: '://downloadcontent.opensuse.org/'
+  loop: "{{ base_suse_repo_files.files | default([]) }}"
+  when: base_is_suse_like
+
+- name: Prefer CDN host for openSUSE repo URLs (SUSE)
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: '://download\.opensuse\.org/'
+    replace: '://downloadcontent.opensuse.org/'
+  loop: "{{ base_suse_repo_files.files | default([]) }}"
+  when: base_is_suse_like
+
+- name: Prefer CDN host for openSUSE repo URLs (SUSE)
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: '://cdn\.opensuse\.org/'
+    replace: '://downloadcontent.opensuse.org/'
+  loop: "{{ base_suse_repo_files.files | default([]) }}"
+  when: base_is_suse_like
+
+- name: Detect SUSE 16+ (openSUSE/SLE)
+  ansible.builtin.set_fact:
+    base_is_suse_16_plus: >-
+      {{
+        base_is_suse_like
+        and (
+          (ansible_facts['distribution_major_version'] | default('0') | int) >= 16
+        )
+      }}
+
+- name: Disable repo-openh264 by default on SUSE 16+ (avoids hard failure on refresh)
+  ansible.builtin.command: zypper -n mr -d repo-openh264
+  changed_when: false
+  failed_when: false
+  when: base_is_suse_16_plus
+
+- name: Update all packages to latest (Debian/Ubuntu)
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 0
+    upgrade: dist
+    force_apt_get: true
+    dpkg_options: "force-confdef,force-confold"
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Update all packages to latest (RedHat/Fedora)
+  ansible.builtin.command: dnf -y upgrade --refresh
+  changed_when: true
+  when:
+    - ansible_facts['os_family'] == 'RedHat' or ansible_facts['distribution'] == 'Fedora'
+    - (ansible_facts['pkg_mgr'] | default('')) == 'dnf5'
+
+- name: Update all packages to latest (RedHat/Fedora)
+  ansible.builtin.dnf:
+    name: "*"
+    state: latest
+    update_only: true
+  when:
+    - ansible_facts['os_family'] == 'RedHat' or ansible_facts['distribution'] == 'Fedora'
+    - (ansible_facts['pkg_mgr'] | default('')) != 'dnf5'
+
+- name: Update all packages to latest (SUSE)
+  ansible.builtin.command: zypper -n --gpg-auto-import-keys refresh
+  changed_when: false
+  failed_when: false
+  when: base_is_suse_like
+
+- name: Apply patches/updates (SUSE)
+  ansible.builtin.command: zypper -n patch
+  changed_when: true
+  failed_when: false
+  when: base_is_suse_like
+
+- name: Update all packages to latest (Arch Linux)
+  ansible.builtin.command: pacman -Syu --noconfirm
+  changed_when: true
+  failed_when: false
+  when: ansible_facts['distribution'] == 'Archlinux'
+
+- name: Build base package list
+  ansible.builtin.set_fact:
+    base_packages: >-
+      {{
+        [
+          'sudo',
+          'rsync',
+          'tar',
+          'gzip',
+          'ca-certificates',
+          base_openssh_package
+        ]
+        + (
+          [
+            'wicked',
+            'wicked-service',
+            'dhcp-client'
+          ]
+          if base_is_suse_like
+          else []
+        )
+      }}
+
+- name: Disable NetworkManager (SUSE 16+, required for Vagrant ifup/ifdown)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop:
+    - NetworkManager.service
+    - NetworkManager-wait-online.service
+  failed_when: false
+  when: base_is_suse_16_plus
+
+- name: Ensure systemd-network config directory exists (eth0 naming)
+  ansible.builtin.file:
+    path: /etc/systemd/network
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: (ansible_facts['service_mgr'] | default('')) == 'systemd'
+
+- name: Standardize network interface names to eth0 (systemd)
+  ansible.builtin.copy:
+    dest: /etc/systemd/network/99-ghx-eth0.link
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Match]
+      Type=ether
+
+      [Link]
+      NamePolicy=kernel
+      MACAddressPolicy=persistent
+  when: (ansible_facts['service_mgr'] | default('')) == 'systemd'
+
+- name: Install primary NIC rename helper (eth0)
+  ansible.builtin.copy:
+    src: ghx-rename-primary-nic-to-eth0
+    dest: /usr/local/sbin/ghx-rename-primary-nic-to-eth0
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install systemd unit to rename primary NIC to eth0
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/ghx-rename-primary-nic-to-eth0.service
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Rename primary ethernet interface to eth0
+      After=systemd-udev-trigger.service
+      After=systemd-udev-settle.service
+      Wants=systemd-udev-settle.service
+      Before=network-pre.target
+      Before=network.target
+      Before=systemd-networkd.service
+      Before=NetworkManager.service
+      Before=wicked.service
+      Wants=network-pre.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/bin/bash /usr/local/sbin/ghx-rename-primary-nic-to-eth0
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=sysinit.target
+      WantedBy=network-pre.target
+      WantedBy=multi-user.target
+  when: (ansible_facts['service_mgr'] | default('')) == 'systemd'
+
+- name: Enable primary NIC rename unit (eth0)
+  ansible.builtin.systemd:
+    name: ghx-rename-primary-nic-to-eth0.service
+    enabled: true
+    daemon_reload: true
+  failed_when: false
+  when: (ansible_facts['service_mgr'] | default('')) == 'systemd'
+
+- name: List non-loopback interfaces (SUSE)
+  ansible.builtin.command: >-
+    bash -lc "ip -o link show | awk -F': ' '{print \$2}' | cut -d@ -f1 | grep -v '^lo$'"
+  register: base_suse_ifnames
+  changed_when: false
+  failed_when: false
+  when: base_is_suse_like
+
+- name: Ensure sysconfig network directory exists (SUSE)
+  ansible.builtin.file:
+    path: /etc/sysconfig/network
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: base_is_suse_like
+
+- name: Ensure wired interfaces come up with DHCP + default route (SUSE)
+  ansible.builtin.copy:
+    dest: "/etc/sysconfig/network/ifcfg-{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      BOOTPROTO="dhcp"
+      STARTMODE="auto"
+      DEFROUTE="yes"
+  loop: >-
+    {{
+      (
+        (
+          base_suse_ifnames.stdout_lines
+          if (base_suse_ifnames is defined and (base_suse_ifnames.stdout_lines | default([])) | length > 0)
+          else []
+        )
+        | select('match', '^eth[0-9]+$')
+        | list
+        + ['eth0']
+      ) | unique
+    }}
+  when: base_is_suse_like
+
+- name: Enable wicked early (SUSE, best-effort)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+  loop:
+    - wicked
+    - wicked-dhcp4
+    - wicked-dhcp6
+  failed_when: false
+  when: base_is_suse_like
+
+- name: Start wicked early (SUSE, best-effort)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+  loop:
+    - wicked
+    - wicked-dhcp4
+    - wicked-dhcp6
+  failed_when: false
+  when: base_is_suse_like
+
+- name: Bring up all interfaces (SUSE, best-effort)
+  ansible.builtin.command: wicked ifup all
+  changed_when: false
+  failed_when: false
+  when: base_is_suse_like
+
+- name: Install default route self-heal helper (SUSE)
+  ansible.builtin.copy:
+    src: ghx-ensure-default-route
+    dest: /usr/local/sbin/ghx-ensure-default-route
+    owner: root
+    group: root
+    mode: '0755'
+  when: base_is_suse_like
+
+- name: Install default route self-heal config (SUSE)
+  ansible.builtin.copy:
+    dest: /etc/sysconfig/ghx-ensure-default-route
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      # Optional config for ghx-ensure-default-route.service
+      # Set to 1 to enable verbose logging to the journal.
+      GHX_DEBUG=0
+  when: base_is_suse_like
+
+- name: Install systemd unit to ensure default route exists (SUSE)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/ghx-ensure-default-route.service
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Ensure a default route exists
+      Wants=network.target
+      After=network.target
+      After=wicked.service
+      After=NetworkManager.service
+
+      [Service]
+      Type=oneshot
+      EnvironmentFile=-/etc/sysconfig/ghx-ensure-default-route
+      TimeoutStartSec=60
+      ExecStart=/usr/local/sbin/ghx-ensure-default-route
+
+      [Install]
+      WantedBy=multi-user.target
+  when: base_is_suse_like and (ansible_facts['service_mgr'] | default('')) == 'systemd'
+
+- name: Install systemd timer to ensure default route exists (SUSE)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/ghx-ensure-default-route.timer
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Periodically ensure a default route exists
+
+      [Timer]
+      OnBootSec=1s
+      OnUnitInactiveSec=10s
+      AccuracySec=1s
+      Unit=ghx-ensure-default-route.service
+
+      [Install]
+      WantedBy=timers.target
+  when: base_is_suse_like and (ansible_facts['service_mgr'] | default('')) == 'systemd'
+
+- name: Enable default route self-heal unit (SUSE)
+  ansible.builtin.systemd:
+    name: ghx-ensure-default-route.service
+    enabled: true
+    daemon_reload: true
+  failed_when: false
+  when: base_is_suse_like and (ansible_facts['service_mgr'] | default('')) == 'systemd'
+
+- name: Enable and start default route self-heal timer (SUSE)
+  ansible.builtin.systemd:
+    name: ghx-ensure-default-route.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  failed_when: false
+  when: base_is_suse_like and (ansible_facts['service_mgr'] | default('')) == 'systemd'
+
+- name: Install SUSE repo self-heal helper
+  ansible.builtin.copy:
+    src: ghx-fix-suse-repos
+    dest: /usr/local/sbin/ghx-fix-suse-repos
+    owner: root
+    group: root
+    mode: '0755'
+  when: base_is_suse_like
+
+- name: Install systemd unit to self-heal SUSE repos
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/ghx-fix-suse-repos.service
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Self-heal SUSE zypper repo definitions
+      After=local-fs.target
+
+      [Service]
+      Type=oneshot
+      EnvironmentFile=-/etc/sysconfig/ghx-ensure-default-route
+      TimeoutStartSec=60
+      ExecStart=/usr/local/sbin/ghx-fix-suse-repos
+
+      [Install]
+      WantedBy=multi-user.target
+  when: base_is_suse_like and (ansible_facts['service_mgr'] | default('')) == 'systemd'
+
+- name: Install systemd timer to self-heal SUSE repos
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/ghx-fix-suse-repos.timer
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Periodically self-heal SUSE zypper repo definitions
+
+      [Timer]
+      OnBootSec=1s
+      OnUnitInactiveSec=10s
+      AccuracySec=1s
+      Unit=ghx-fix-suse-repos.service
+
+      [Install]
+      WantedBy=timers.target
+  when: base_is_suse_like and (ansible_facts['service_mgr'] | default('')) == 'systemd'
+
+- name: Enable and start SUSE repo self-heal timer
+  ansible.builtin.systemd:
+    name: ghx-fix-suse-repos.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  failed_when: false
+  when: base_is_suse_like and (ansible_facts['service_mgr'] | default('')) == 'systemd'
+
+- name: Install DNS self-heal helper (SUSE)
+  ansible.builtin.copy:
+    src: ghx-ensure-dns
+    dest: /usr/local/sbin/ghx-ensure-dns
+    owner: root
+    group: root
+    mode: '0755'
+  when: base_is_suse_like
+
+- name: Install systemd unit to self-heal DNS (SUSE)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/ghx-ensure-dns.service
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Self-heal DNS resolution
+      Wants=network.target
+      After=network.target
+      After=wicked.service
+      After=NetworkManager.service
+      After=ghx-ensure-default-route.service
+
+      [Service]
+      Type=oneshot
+      EnvironmentFile=-/etc/sysconfig/ghx-ensure-default-route
+      TimeoutStartSec=60
+      ExecStart=/usr/local/sbin/ghx-ensure-dns
+
+      [Install]
+      WantedBy=multi-user.target
+  when: base_is_suse_like and (ansible_facts['service_mgr'] | default('')) == 'systemd'
+
+- name: Install systemd timer to self-heal DNS (SUSE)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/ghx-ensure-dns.timer
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Periodically self-heal DNS resolution
+
+      [Timer]
+      OnBootSec=1s
+      OnUnitInactiveSec=10s
+      AccuracySec=1s
+      Unit=ghx-ensure-dns.service
+
+      [Install]
+      WantedBy=timers.target
+  when: base_is_suse_like and (ansible_facts['service_mgr'] | default('')) == 'systemd'
+
+- name: Enable and start DNS self-heal timer (SUSE)
+  ansible.builtin.systemd:
+    name: ghx-ensure-dns.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  failed_when: false
+  when: base_is_suse_like and (ansible_facts['service_mgr'] | default('')) == 'systemd'
+
+- name: Install base packages (Debian/Ubuntu)
+  ansible.builtin.apt:
+    name: "{{ base_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Install base packages (minimal)
+  ansible.builtin.package:
+    name: "{{ base_packages }}"
+    state: present
+  when: ansible_facts['os_family'] != 'Debian'
+
+- name: Detect Arch-like guest
+  ansible.builtin.set_fact:
+    base_is_arch_like: "{{ (ansible_facts['pkg_mgr'] | default('')) == 'pacman' }}"
+
+- name: Detect Debian-like guest
+  ansible.builtin.set_fact:
+    base_is_debian_like: "{{ ansible_facts['os_family'] == 'Debian' }}"
+
+- name: Ensure systemd-networkd config directory exists (Arch Linux)
+  ansible.builtin.file:
+    path: /etc/systemd/network
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: base_is_arch_like
+
+- name: Remove cloud-init networkd files that pin a build-time MAC (Arch Linux)
+  ansible.builtin.find:
+    paths: /etc/systemd/network
+    patterns: '*cloud-init*.network'
+    file_type: file
+  register: base_arch_cloud_init_networkd_files
+  when: base_is_arch_like
+
+- name: Remove MACAddress pinning from cloud-init networkd files (Arch Linux)
+  ansible.builtin.lineinfile:
+    path: "{{ item.path }}"
+    regexp: '^MACAddress='
+    state: absent
+  loop: "{{ base_arch_cloud_init_networkd_files.files | default([]) }}"
+  when: base_is_arch_like
+
+- name: Configure DHCP for wired interfaces (Arch Linux)
+  ansible.builtin.copy:
+    dest: /etc/systemd/network/20-wired-dhcp.network
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Match]
+      Type=ether
+
+      [Network]
+      DHCP=yes
+      IPv6AcceptRA=yes
+  when: base_is_arch_like
+
+- name: Disable cloud-init networking (Arch Linux)
+  ansible.builtin.copy:
+    dest: /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      network:
+        config: disabled
+  when: base_is_arch_like
+
+- name: Enable and start systemd-networkd (Arch Linux)
+  ansible.builtin.systemd:
+    name: systemd-networkd
+    enabled: true
+    state: started
+  when: base_is_arch_like
+
+- name: Restart systemd-networkd to apply config (Arch Linux)
+  ansible.builtin.systemd:
+    name: systemd-networkd
+    state: restarted
+  when: base_is_arch_like
+
+- name: Ensure systemd-networkd config directory exists (Debian/Ubuntu)
+  ansible.builtin.file:
+    path: /etc/systemd/network
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: base_is_debian_like
+
+- name: Configure DHCP for wired interfaces (Debian/Ubuntu)
+  ansible.builtin.copy:
+    dest: /etc/systemd/network/20-wired-dhcp.network
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Match]
+      Type=ether
+
+      [Network]
+      DHCP=yes
+      IPv6AcceptRA=yes
+  when: base_is_debian_like
+
+- name: Disable cloud-init networking (Debian/Ubuntu)
+  ansible.builtin.copy:
+    dest: /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      network:
+        config: disabled
+  when: base_is_debian_like
+
+- name: Find cloud-init netplan configs (Debian/Ubuntu)
+  ansible.builtin.find:
+    paths: /etc/netplan
+    patterns: '*cloud-init*.yaml'
+    file_type: file
+  register: base_debian_cloud_init_netplan_files
+  failed_when: false
+  when: base_is_debian_like
+
+- name: Remove cloud-init netplan configs that may be MAC-pinned (Debian/Ubuntu)
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ base_debian_cloud_init_netplan_files.files | default([]) }}"
+  when: base_is_debian_like
+
+- name: Enable systemd-networkd (Debian/Ubuntu)
+  ansible.builtin.systemd:
+    name: systemd-networkd
+    masked: false
+    enabled: true
+  when: base_is_debian_like
+
+- name: Install qemu-guest-agent (Debian/Ubuntu, best-effort)
+  ansible.builtin.apt:
+    name: qemu-guest-agent
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  register: base_qga_apt
+  failed_when: >-
+    base_qga_apt is failed and
+    ('No package matching' not in (base_qga_apt.msg | default(''))) and
+    ('Unable to locate package' not in (base_qga_apt.msg | default('')))
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Install qemu-guest-agent (non-Debian, best-effort)
+  ansible.builtin.package:
+    name: qemu-guest-agent
+    state: present
+  register: base_qga_pkg
+  failed_when: false
+  when: ansible_facts['os_family'] != 'Debian'
+
+- name: Gather service facts
+  ansible.builtin.service_facts:
+
+- name: Determine SSH service name
+  ansible.builtin.set_fact:
+    base_ssh_service_name: >-
+      {{
+        'ssh'
+        if 'ssh.service' in ansible_facts.services
+        else 'sshd'
+      }}
+
+- name: Ensure SSH service enabled and running
+  ansible.builtin.service:
+    name: "{{ base_ssh_service_name }}"
+    enabled: true
+    state: started
+
+- name: Disable JeOS/YaST firstboot (SUSE)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: false
+    masked: true
+    state: stopped
+  loop:
+    - jeos-firstboot
+    - yast2-firstboot
+    - firstboot
+  failed_when: false
+  when: ansible_facts['os_family'] == 'Suse'
+
+- name: Disable firstboot via sysconfig (SUSE)
+  ansible.builtin.copy:
+    dest: /etc/sysconfig/firstboot
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      FIRSTBOOT=no
+  when: ansible_facts['os_family'] == 'Suse'
+
+- name: Remove YaST firstboot marker/profile files (SUSE)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/YaST2/firstboot.xml
+    - /etc/YaST2/firstboot
+    - /etc/YaST2/firstboot.rng
+  failed_when: false
+  when: ansible_facts['os_family'] == 'Suse'
+
+- name: Check if QEMU guest-agent channel exists
+  ansible.builtin.stat:
+    path: /dev/virtio-ports/org.qemu.guest_agent.0
+  register: base_qga_channel
+
+- name: Enable qemu-guest-agent (if present)
+  ansible.builtin.systemd:
+    name: qemu-guest-agent
+    enabled: true
+  when: "'qemu-guest-agent.service' in ansible_facts.services"
+
+- name: Start qemu-guest-agent if channel exists
+  ansible.builtin.systemd:
+    name: qemu-guest-agent
+    state: started
+  failed_when: false
+  when:
+    - "'qemu-guest-agent.service' in ansible_facts.services"
+    - base_qga_channel.stat.exists
+
+- name: Ensure sudoers.d exists
+  ansible.builtin.file:
+    path: /etc/sudoers.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0750'
