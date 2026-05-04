@@ -19,7 +19,7 @@ The following targets are available on HashiCorp Cloud Platform:
 
 - Ubuntu: [22.04](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/ubuntu-22.04), [24.04](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/ubuntu-24.04)
 - Debian: [12](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/debian-12), [13](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/debian-13)
-- Fedora: [42](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/fedora-42), [43](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/fedora-43)
+- Fedora: [42](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/fedora-42), [43](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/fedora-43), [44](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/fedora-44)
 - Rocky Linux: [9](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/rockylinux-9), [10](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/rockylinux-10)
 - AlmaLinux: [9](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/almalinux-9), [10](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/almalinux-10)
 - [Arch Linux](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/archlinux)
