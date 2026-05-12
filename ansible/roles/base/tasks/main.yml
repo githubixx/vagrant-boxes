@@ -579,7 +579,7 @@
     mode: '0644'
     content: |
       [Match]
-      Type=ether
+      Name=eth*
 
       [Network]
       DHCP=yes
@@ -627,7 +627,7 @@
     mode: '0644'
     content: |
       [Match]
-      Type=ether
+      Name=eth*
 
       [Network]
       DHCP=yes
