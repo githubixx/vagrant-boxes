@@ -21,7 +21,10 @@ locals {
   # This template lives under packer/templates/, so the repository root is two levels up.
   repo_root = abspath("${path.root}/../..")
 
-  cloud_init_user_data = fileexists("${local.repo_root}/packer/cloud-init/${var.box_name}/user-data") ? "${local.repo_root}/packer/cloud-init/${var.box_name}/user-data" : "${local.repo_root}/packer/cloud-init/common/user-data"
+  target_cloud_init_user_data = "${local.repo_root}/packer/cloud-init/${var.box_name}/user-data"
+  cloud_init_user_data        = var.cloud_init_user_data_file != "" ? "${local.repo_root}/${var.cloud_init_user_data_file}" : (
+    fileexists(local.target_cloud_init_user_data) ? local.target_cloud_init_user_data : "${local.repo_root}/packer/cloud-init/common/user-data"
+  )
 }
 
 variable "box_name" {
@@ -35,6 +38,12 @@ variable "cloud_image_url" {
 variable "cloud_image_checksum" {
   type    = string
   default = "none"
+}
+
+variable "cloud_init_user_data_file" {
+  type        = string
+  default     = ""
+  description = "Optional repository-relative path to cloud-init user-data."
 }
 
 variable "cpus" {

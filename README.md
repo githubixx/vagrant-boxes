@@ -23,7 +23,7 @@ The following targets can be built locally:
 - Rocky Linux: 9, 10
 - AlmaLinux: 9, 10
 - Arch Linux
-- openSUSE Leap: 15.6, 16.0
+- openSUSE Leap: 15.6, 16.0, 16.1
 
 ## Host prerequisites
 
@@ -101,6 +101,8 @@ Provisioning first updates the guest to the latest available packages (including
 
 Note: `/tmp` and `/var/tmp` are cleaned via a **first-boot systemd oneshot** (`box-firstboot-cleanup.service`).
 This avoids breaking Ansible during image build while still delivering a clean box for consumers.
+
+Packer uses target-specific cloud-init user data when available, otherwise the common configuration. A target can set `cloud_init_user_data_file` to a repository-relative path to reuse another configuration, as Leap 16.1 does.
 
 ## Molecule
 
