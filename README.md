@@ -19,7 +19,7 @@ The following targets can be built locally:
 
 - Ubuntu: 22.04, 24.04, 26.04
 - Debian: 12, 13
-- Fedora: 42, 43, 44
+- Fedora: 42, 43, 44, 45
 - Rocky Linux: 9, 10
 - AlmaLinux: 9, 10
 - Arch Linux
@@ -33,6 +33,10 @@ The following targets can be built locally:
 - QEMU/KVM + libvirt (`qemu-system-x86_64`, `virsh`, etc.)
 - `vagrant` + `vagrant-libvirt`
 - Python tooling for provisioning/tests: `ansible-core`, `molecule`, `molecule-vagrant` (see `requirements.txt`)
+
+Fedora 45 keeps its system Python 3.15 and also installs Python 3.14 for Ansible. Building and testing it requires an `ansible-core` version that supports Python 3.14 on the guest, such as 2.20 or 2.21 (`pip install 'ansible-core>=2.20'`). When using the box with your own Ansible inventory, set `ansible_python_interpreter: /usr/bin/python3.14` for the Fedora 45 guest.
+
+Fedora's DNF Python bindings are built for the system Python, so Ansible's `dnf5` and `package` modules cannot use those bindings with Python 3.14. For Fedora 45, this role uses the DNF command instead. To use the modules in your own playbooks, use a controller with Ansible 2.22 or newer and the guest's `/usr/bin/python3`.
 
 ### HCP Vagrant Registry deprecation
 
