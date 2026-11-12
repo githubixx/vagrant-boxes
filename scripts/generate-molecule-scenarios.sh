@@ -20,7 +20,7 @@ fi
 
 echo "Generating Molecule scenarios from ${#var_files[@]} var files"
 
-box_namespace="${VAGRANT_BOX_NAMESPACE:-${VAGRANT_CLOUD_NAMESPACE:-${USER:-local}}}"
+box_namespace="${VAGRANT_BOX_NAMESPACE:-${USER:-local}}"
 
 ip_octet=101
 

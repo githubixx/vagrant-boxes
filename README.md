@@ -2,28 +2,28 @@
 
 Build minimal Vagrant base boxes for the **libvirt** provider using **HashiCorp Packer** (qemu builder) and provision them using **Ansible**.
 
-This repo is intentionally focused on **minimal guest packages** suitable for **Ansible + Molecule** workflows. This repo can be used to build your own images locally on a Linux host. For requirements see below. Pre-built images are available on HashiCorp Cloud Platform (see [Supported targets](#supported-targets)).
+This repo is intentionally focused on **minimal guest packages** suitable for **Ansible + Molecule** workflows. This repo can be used to build your own images locally on a Linux host. For requirements see below.
 
 ## Goals
 
 - Have a Python version installed supported by Ansible
 - Every box has `eth0` interface
 - Boxes are based on Cloud images as published by Linux distributions
-- Published [githubixx boxes](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx) are shrank to keep size small
+- Support optional image shrinking to keep box sizes small
 - Minimal changes to original images (only what's needed to make it work with Ansible + Molecule + network connectivity)
 - Focus on server functionality
 
 ## Supported targets
 
-The following targets are available on HashiCorp Cloud Platform:
+The following targets can be built locally:
 
-- Ubuntu: [22.04](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/ubuntu-22.04), [24.04](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/ubuntu-24.04), [26.04](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/ubuntu-26.04)
-- Debian: [12](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/debian-12), [13](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/debian-13)
-- Fedora: [42](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/fedora-42), [43](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/fedora-43), [44](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/fedora-44)
-- Rocky Linux: [9](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/rockylinux-9), [10](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/rockylinux-10)
-- AlmaLinux: [9](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/almalinux-9), [10](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/almalinux-10)
-- [Arch Linux](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/archlinux)
-- openSUSE Leap: [15.6](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/opensuse-leap-15.6), [16](https://portal.cloud.hashicorp.com/vagrant/discover/githubixx/opensuse-leap-16.0)
+- Ubuntu: 22.04, 24.04, 26.04
+- Debian: 12, 13
+- Fedora: 42, 43, 44
+- Rocky Linux: 9, 10
+- AlmaLinux: 9, 10
+- Arch Linux
+- openSUSE Leap: 15.6, 16.0
 
 ## Host prerequisites
 
@@ -34,9 +34,11 @@ The following targets are available on HashiCorp Cloud Platform:
 - `vagrant` + `vagrant-libvirt`
 - Python tooling for provisioning/tests: `ansible-core`, `molecule`, `molecule-vagrant` (see `requirements.txt`)
 
-### Optional
+### HCP Vagrant Registry deprecation
 
-- Hashicorp [hcp](https://releases.hashicorp.com/hcp) tool to upload Vagrant boxes to Vagrant registry (Hashicorp account needed)
+HashiCorp is [deprecating HCP Vagrant Registry](https://developer.hashicorp.com/hcp/docs/vagrant/hcp-vagrant-eol): new box creation ended October 1, 2026, and registry operations end December 31, 2026. Registry publishing support has been removed from this repository. Build boxes locally as described below, or host them elsewhere if you need to share them; Vagrant itself remains available.
+
+If you installed the former publishing timer, disable it with `sudo systemctl disable --now vagrant-box-publish.timer`.
 
 ## Quick start
 
@@ -81,137 +83,6 @@ make molecule-gen
 molecule test -s ubuntu-24.04-libvirt
 molecule test -s ubuntu-22.04-libvirt
 molecule test -s archlinux-libvirt
-```
-
-## Publishing to Vagrant Cloud
-
-This repo includes a local publish helper that uploads the built `.box` files to Vagrant Cloud via the API.
-
-Prerequisites:
-
-- Login with HCP CLI first: `hcp auth login`
-- Authenticate with the HCP CLI so the script can fetch a token via `hcp auth print-access-token`
-
-Publish all boxes found in `packer/vars/*.pkrvars.hcl`:
-
-```bash
-# Option A (preferred): use HCP CLI auth
-# hcp auth login
-
-# Option B (non-interactive): provide the access token explicitly
-# export HCP_ACCESS_TOKEN=...
-
-# Required:
-# export VAGRANT_CLOUD_NAMESPACE=<your_vagrant_cloud_namespace>
-
-# Optional overrides:
-# export VAGRANT_CLOUD_PROVIDER=libvirt
-# export VAGRANT_CLOUD_ARCH=amd64
-
-make publish
-```
-
-Publish a **single** box by passing its name as an argument to the publish script:
-
-```bash
-# Example: publish only fedora-43
-./scripts/publish.sh fedora-43
-
-# Same via make
-make publish BOX=fedora-43
-
-# Skip building (upload whatever is in output-fedora-43/package.box)
-./scripts/publish.sh --no-build fedora-43
-
-# Force a specific version for that one box
-./scripts/publish.sh --version 20260210.0.1 fedora-43
-```
-
-### Versioning and same-day republish
-
-If `VAGRANT_CLOUD_VERSION` (or `--version`) is not set, the publish script uses the **latest locally installed** box version for that box+provider+architecture (as shown by `vagrant box list`).
-
-In other words: the local version is the source of truth, and the publish script will create/upload **that exact version** to Vagrant Cloud.
-
-Note: because the publish script reads the version from your local Vagrant box store, your local box name must match the publish namespace. Either set `VAGRANT_BOX_NAMESPACE` to the same value as `VAGRANT_CLOUD_NAMESPACE`, or set `VAGRANT_CLOUD_NAMESPACE` before building so the build defaults follow it.
-
-If no local version exists, publishing fails (by design). Either build/add the box locally first (the default behavior of `make build`), or pass an explicit `--version`/`VAGRANT_CLOUD_VERSION`.
-
-You can force a version explicitly:
-
-```bash
-VAGRANT_CLOUD_VERSION=20260206.0.3 ./scripts/publish.sh ubuntu-24.04 debian-13
-```
-
-By default, the publish script **skips boxes that are unchanged**: it compares the local `.box` checksum with the checksum of the **same version** already present on Vagrant Cloud for that box+provider+architecture.
-
-If the remote version is already released/active but the checksum differs, publishing fails (to avoid overwriting an immutable released version); bump the local box version first.
-
-### Wrapper for systemd timer / cron
-
-There is a small wrapper script that adds:
-
-- `flock` locking (prevents concurrent runs)
-- retries with backoff
-- timestamped logs under `packer/logs/`
-
-Run it manually:
-
-```bash
-# Option A (preferred): use HCP CLI auth
-# hcp auth login
-
-# Option B (non-interactive): provide the access token explicitly
-# export HCP_ACCESS_TOKEN=...
-make publish-weekly
-```
-
-Optional env vars for the wrapper:
-
-- `PUBLISH_ARGS` (passed to `scripts/publish.sh`, e.g. `--no-release`)
-- `PUBLISH_RETRIES` (default `3`)
-- `PUBLISH_BACKOFF_SECONDS` (default `30`, multiplied by attempt)
-- `PUBLISH_LOG_DIR` (default `packer/logs`)
-- `PUBLISH_LOCK_PATH` (default `packer_cache/publish.lock`)
-
-### Example systemd timer
-
-Example units are in `systemd/`:
-
-- `systemd/vagrant-box-publish.service`
-- `systemd/vagrant-box-publish.timer`
-
-Install (adjust paths as needed):
-
-```bash
-sudo install -D -m 0644 systemd/vagrant-box-publish.service /etc/systemd/system/vagrant-box-publish.service
-sudo install -D -m 0644 systemd/vagrant-box-publish.timer /etc/systemd/system/vagrant-box-publish.timer
-
-# Create an env file for secrets and overrides
-sudo install -D -m 0600 /dev/null /etc/default/vagrant-box-publish
-sudoedit /etc/default/vagrant-box-publish
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now vagrant-box-publish.timer
-
-systemctl list-timers --all | grep vagrant-box-publish
-```
-
-Example `/etc/default/vagrant-box-publish`:
-
-```bash
-# Option A (preferred): rely on HCP CLI auth (token is fetched at runtime)
-# If you run via systemd, ensure the service user has an HCP auth context.
-
-# Option B (non-interactive): explicitly provide an HCP token
-# HCP_ACCESS_TOKEN=...
-
-VAGRANT_CLOUD_NAMESPACE=<your_vagrant_cloud_namespace>
-VAGRANT_CLOUD_PROVIDER=libvirt
-VAGRANT_CLOUD_ARCH=amd64
-
-# Optional: pass flags to scripts/publish.sh
-# PUBLISH_ARGS="--no-release"
 ```
 
 ## Notes on “minimal packages”
@@ -278,7 +149,8 @@ VAGRANT_DEFAULT_PROVIDER=libvirt molecule test -s ubuntu-24.04-libvirt
 - The scenario expects the box file to exist locally (build it first with `make build BOX=<box>`).
 - Scenarios add the `.box` into Vagrant by name via `vagrant box add` in the `dependency` step (avoids absolute paths in the repo).
   - Box name: `<namespace>/<box>` (e.g. `example/archlinux`)
-    - The namespace is controlled by `VAGRANT_BOX_NAMESPACE` (defaults to `VAGRANT_CLOUD_NAMESPACE`, else `$USER`).
+    - The namespace is controlled by `VAGRANT_BOX_NAMESPACE` (defaults to `$USER`, or `local` if unset). Set it before both building and generating scenarios to use the same box name.
+    - If you previously used `VAGRANT_CLOUD_NAMESPACE`, set `VAGRANT_BOX_NAMESPACE` to that value to keep the same local box names.
   - Box provider: `libvirt` only
   - Box architecture: `amd64` only
   - Box version defaults to the **latest locally installed** version for that box/provider/arch (falls back to `$(date -u +%Y%m%d).0.0` if none exists).
