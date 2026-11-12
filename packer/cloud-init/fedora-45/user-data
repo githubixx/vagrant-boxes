@@ -1,0 +1,26 @@
+#cloud-config
+
+users:
+  - default
+  - name: vagrant
+    shell: /bin/bash
+    lock_passwd: false
+
+ssh_pwauth: true
+chpasswd:
+  expire: false
+  list: |
+    vagrant:vagrant
+
+packages:
+  - python3.14
+
+runcmd:
+  - [ bash, -lc, 'systemctl enable --now ssh || systemctl enable --now sshd || true' ]
+
+write_files:
+  - path: /etc/sudoers.d/90-vagrant
+    owner: root:root
+    permissions: '0440'
+    content: |
+      vagrant ALL=(ALL) NOPASSWD:ALL

@@ -428,10 +428,10 @@ packer "${packer_args[@]}" "${packer_template}"
 #
 # Config:
 #   VAGRANT_ADD_BOX=1|0           (default: 1)
-#   VAGRANT_BOX_NAMESPACE=name    (default: VAGRANT_CLOUD_NAMESPACE, else $USER)
+#   VAGRANT_BOX_NAMESPACE=name    (default: $USER, else local)
 #   VAGRANT_BOX_PROVIDER=name     (default: libvirt)
 vagrant_add_box="${VAGRANT_ADD_BOX:-1}"
-vagrant_box_namespace="${VAGRANT_BOX_NAMESPACE:-${VAGRANT_CLOUD_NAMESPACE:-${USER:-local}}}"
+vagrant_box_namespace="${VAGRANT_BOX_NAMESPACE:-${USER:-local}}"
 vagrant_box_provider="${VAGRANT_BOX_PROVIDER:-libvirt}"
 vagrant_box_version="${VAGRANT_BOX_VERSION:-}"
 vagrant_box_version_auto_bump="${VAGRANT_BOX_VERSION_AUTO_BUMP:-1}"

@@ -12,6 +12,10 @@
   ansible.builtin.set_fact:
     base_is_suse_like: "{{ ansible_facts['os_family'] == 'Suse' }}"
 
+- name: Detect Fedora 45 guest
+  ansible.builtin.set_fact:
+    base_is_fedora_45: "{{ ansible_facts['distribution'] == 'Fedora' and ansible_facts['distribution_major_version'] == '45' }}"
+
 - name: Find zypper repo definitions (SUSE)
   ansible.builtin.find:
     paths: /etc/zypp/repos.d
@@ -167,6 +171,7 @@
           if base_is_suse_like
           else []
         )
+        + (['qemu-guest-agent'] if base_is_fedora_45 else [])
       }}
 
 - name: Disable NetworkManager (SUSE 16+, required for Vagrant ifup/ifdown)
@@ -536,7 +541,26 @@
   ansible.builtin.package:
     name: "{{ base_packages }}"
     state: present
-  when: ansible_facts['os_family'] != 'Debian'
+  when: ansible_facts['os_family'] != 'Debian' and not base_is_fedora_45
+
+# Fedora 45's libdnf5 bindings use system Python, not the Ansible interpreter.
+- name: Check base packages (Fedora 45)
+  ansible.builtin.command:
+    argv: [rpm, -q, --quiet, "{{ item }}"]
+  loop: "{{ base_packages }}"
+  register: base_fedora_45_package_checks
+  changed_when: false
+  failed_when: base_fedora_45_package_checks.rc not in [0, 1]
+  when: base_is_fedora_45
+
+- name: Install missing base packages (Fedora 45)
+  ansible.builtin.command:
+    argv: "{{ ['dnf', '-y', 'install'] + base_fedora_45_missing_packages }}"
+  vars:
+    base_fedora_45_missing_packages: "{{ base_fedora_45_package_checks.results | selectattr('rc', 'ne', 0) | map(attribute='item') | list }}"
+  when:
+    - base_is_fedora_45
+    - base_fedora_45_missing_packages | length > 0
 
 - name: Detect Arch-like guest
   ansible.builtin.set_fact:
@@ -687,7 +711,7 @@
     state: present
   register: base_qga_pkg
   failed_when: false
-  when: ansible_facts['os_family'] != 'Debian'
+  when: ansible_facts['os_family'] != 'Debian' and not base_is_fedora_45
 
 - name: Gather service facts
   ansible.builtin.service_facts:

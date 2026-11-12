@@ -20,7 +20,7 @@ fi
 
 echo "Generating Molecule scenarios from ${#var_files[@]} var files"
 
-box_namespace="${VAGRANT_BOX_NAMESPACE:-${VAGRANT_CLOUD_NAMESPACE:-${USER:-local}}}"
+box_namespace="${VAGRANT_BOX_NAMESPACE:-${USER:-local}}"
 
 ip_octet=101
 
@@ -110,6 +110,7 @@ platforms:
 
 provisioner:
   name: ansible
+__PYTHON_INVENTORY__
 
 ansible:
   playbooks:
@@ -124,6 +125,11 @@ YAML
   molecule_yml="${molecule_yml_template//__BOX__/${box}}"
   molecule_yml="${molecule_yml//__NAMESPACE__/${box_namespace}}"
   molecule_yml="${molecule_yml//__IP__/${ip_octet}}"
+  python_inventory=""
+  if [[ "${box}" == "fedora-45" ]]; then
+    python_inventory=$'  inventory:\n    host_vars:\n      instance:\n        ansible_python_interpreter: /usr/bin/python3.14'
+  fi
+  molecule_yml="${molecule_yml//__PYTHON_INVENTORY__/${python_inventory}}"
   printf '%s\n' "${molecule_yml}" > "${scenario_path}/molecule.yml"
 
   ip_octet=$((ip_octet + 1))
@@ -165,6 +171,19 @@ YAML
       ansible.builtin.debug:
         var: python3_smoke.stdout_lines
 YAML
+
+  if [[ "${box}" == "fedora-45" ]]; then
+    cat >> "${scenario_path}/verify.yml" <<'YAML'
+
+    - name: Verify the system Python remains unchanged
+      ansible.builtin.raw: python3 -c 'import sys; assert sys.version_info[:2] == (3, 15)'
+      changed_when: false
+
+    - name: Verify the Ansible Python interpreter
+      ansible.builtin.command: /usr/bin/python3.14 -c "import json, ssl, sys; assert sys.version_info[:2] == (3, 14)"
+      changed_when: false
+YAML
+  fi
 
 done
 
